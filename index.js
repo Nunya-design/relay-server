@@ -7,9 +7,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import wav from 'wav';
 import axios from 'axios';
+import twilio from 'twilio';
 
 dotenv.config();
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,9 +30,15 @@ wss.on('connection', (ws, req) => {
   console.log('📞 New WebSocket connection from Twilio');
 
   const buffers = [];
+  let callSid = '';
 
   ws.on('message', async (msg) => {
     const data = JSON.parse(msg.toString());
+
+    if (data.event === 'start') {
+      callSid = data.start.callSid;
+      console.log('🔗 Call SID:', callSid);
+    }
 
     if (data.event === 'media') {
       const audioBuffer = Buffer.from(data.media.payload, 'base64');
@@ -75,12 +84,16 @@ wss.on('connection', (ws, req) => {
           const reply = aiResponse.choices[0].message.content;
           console.log('🤖 AI Response:', reply);
 
-          // 🔊 Send response to /api/respond for TTS
-          await axios.post('https://voice-agent-inky.vercel.app/api/respond', {
-            message: reply,
-          });
+          if (callSid) {
+            await twilioClient.calls(callSid).update({
+              twiml: `<Response><Say voice="Polly.Joanna">${reply}</Say><Hangup/></Response>`,
+            });
+            console.log('📞 Sent GPT reply back to Twilio via REST API');
+          } else {
+            console.warn('⚠️ No callSid found. Cannot send response back to Twilio.');
+          }
         } catch (err) {
-          console.error('❌ Whisper or GPT failed:', err.message);
+          console.error('❌ Whisper/GPT/Twilio error:', err.message);
         }
       });
     }
@@ -91,13 +104,4 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log('❌ WebSocket closed');
-  });
-});
-
-// ✅ Listen on 0.0.0.0 so Render can expose the port
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🟢 WebSocket relay server running on port ${PORT}`);
-});
-
+    console.log('❌ WebSocket
