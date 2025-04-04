@@ -2,19 +2,16 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import wav from 'wav';
-import twilio from 'twilio';
+import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import base64 from 'base64-js';
 
 dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const ELEVENLABS_API_KEY = 'sk_ff7a99bb4f596ae8c4d0b151b8bd60d94a195c8cd572b125';
+const ELEVENLABS_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel voice
 
 const server = http.createServer();
 const wss = new WebSocketServer({ noServer: true });
@@ -25,100 +22,111 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-// Helper to escape special characters for XML
-function escapeXml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+wss.on('connection', (ws) => {
+  console.log('📞 New ConversationRelay WebSocket connected');
 
-wss.on('connection', (ws, req) => {
-  console.log('📞 New WebSocket connection from Twilio');
-
-  const buffers = [];
-  let callSid = '';
+  let mediaBuffer = [];
+  let mediaActive = false;
 
   ws.on('message', async (msg) => {
     const data = JSON.parse(msg.toString());
 
     if (data.event === 'start') {
-      callSid = data.start.callSid;
-      console.log('🔗 Call SID:', callSid);
+      console.log('🚀 Streaming started');
+      mediaBuffer = [];
+      mediaActive = true;
     }
 
-    if (data.event === 'media') {
-      const audioBuffer = Buffer.from(data.media.payload, 'base64');
-      buffers.push(audioBuffer);
+    if (data.event === 'media' && mediaActive) {
+      const payload = Buffer.from(data.media.payload, 'base64');
+      mediaBuffer.push(payload);
     }
 
     if (data.event === 'stop') {
-      console.log('🛑 Media stream ended');
-     const outputPath = '/tmp/output.wav';
-      const fileWriter = new wav.FileWriter(outputPath, {
-        sampleRate: 8000,
-        channels: 1,
-        bitDepth: 16,
-      });
+      console.log('🛑 Streaming stopped');
+      mediaActive = false;
 
-      for (const b of buffers) fileWriter.write(b);
-      fileWriter.end();
+      const completeAudio = Buffer.concat(mediaBuffer);
+      const filename = `/tmp/${uuidv4()}.wav`;
 
-      fileWriter.on('finish', async () => {
-        console.log('📁 Audio saved. Sending to Whisper...');
+      // Save the file
+      await Bun.write(filename, completeAudio);
 
-        try {
-          const transcription = await openai.audio.transcriptions.create({
-            file: fs.createReadStream(outputPath),
-            model: 'whisper-1',
-          });
+      try {
+        const transcription = await openai.audio.transcriptions.create({
+          file: Bun.file(filename),
+          model: 'whisper-1',
+        });
 
-          console.log('📝 Transcription:', transcription.text);
+        console.log('📝 Transcription:', transcription.text);
 
-          const aiResponse = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
-            messages: [
-              {
-                role: 'system',
-                content:
-                  'You are a helpful SDR working for Twilio. Your job is to ask one qualifying question and try to get a meeting set up.',
-              },
-              { role: 'user', content: transcription.text },
-            ],
-          });
+        const aiResponse = await openai.chat.completions.create({
+          model: 'gpt-3.5-turbo',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a helpful Twilio sales rep. Answer questions and try to schedule a quick meeting.',
+            },
+            {
+              role: 'user',
+              content: transcription.text,
+            },
+          ],
+        });
 
-          const reply = aiResponse.choices[0].message.content;
-          console.log('🤖 AI Response:', reply);
+        const reply = aiResponse.choices[0].message.content;
+        console.log('🤖 GPT Response:', reply);
 
-          if (callSid) {
-            const safeReply = escapeXml(reply);
-            await twilioClient.calls(callSid).update({
-              twiml: `<Response><Say voice="Polly.Joanna">${safeReply}</Say><Hangup/></Response>`,
-            });
-            console.log('📞 Sent GPT reply back to Twilio via REST API');
-          } else {
-            console.warn('⚠️ No callSid found. Cannot send response back to Twilio.');
-          }
-        } catch (err) {
-          console.error('❌ Whisper/GPT/Twilio error:', err.message);
+        // 🔊 Convert GPT reply to audio via ElevenLabs
+        const ttsResponse = await axios({
+          method: 'POST',
+          url: `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+          headers: {
+            'xi-api-key': ELEVENLABS_API_KEY,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg',
+          },
+          responseType: 'arraybuffer',
+          data: {
+            text: reply,
+            model_id: 'eleven_monolingual_v1',
+          },
+        });
+
+        const audioBuffer = Buffer.from(ttsResponse.data);
+
+        // Convert audio buffer to base64 chunks and send back to Twilio
+        const chunkSize = 3200;
+        for (let i = 0; i < audioBuffer.length; i += chunkSize) {
+          const chunk = audioBuffer.slice(i, i + chunkSize);
+          const payload = chunk.toString('base64');
+          ws.send(JSON.stringify({
+            event: 'media',
+            media: { payload },
+          }));
+          await new Promise((r) => setTimeout(r, 100)); // simulate pacing
         }
-      });
-    }
-  });
 
-  ws.on('error', (err) => {
-    console.error('❌ WebSocket error:', err.message);
+        // Tell Twilio we're done sending audio
+        ws.send(JSON.stringify({ event: 'mark', mark: { name: 'done' } }));
+        console.log('✅ Response sent back to caller');
+      } catch (err) {
+        console.error('❌ Error during processing:', err.message);
+      }
+    }
   });
 
   ws.on('close', () => {
     console.log('❌ WebSocket closed');
   });
+
+  ws.on('error', (err) => {
+    console.error('❌ WebSocket error:', err.message);
+  });
 });
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`🟢 WebSocket relay server running on port ${PORT}`);
+  console.log(`🟢 WebSocket server ready on port ${PORT}`);
 });
 
