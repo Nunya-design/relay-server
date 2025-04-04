@@ -27,31 +27,33 @@ wss.on('connection', (ws) => {
   let mediaActive = false;
 
   ws.on('message', async (msg) => {
-    const data = JSON.parse(msg.toString());
-    console.log('📨 Event received:', data.event);
+    try {
+      const text = typeof msg === 'string' ? msg : msg.toString();
+      const data = JSON.parse(text);
 
-    if (data.event === 'start') {
-      console.log('🚀 Start event:', data.start);
-      mediaBuffer = [];
-      mediaActive = true;
-    }
+      console.log('📨 Event received:', data.event);
 
-    if (data.event === 'media' && mediaActive) {
-      console.log('🎧 Received media chunk');
-      const payload = Buffer.from(data.media.payload, 'base64');
-      mediaBuffer.push(payload);
-    }
+      if (data.event === 'start') {
+        console.log('🚀 Start event:', data.start);
+        mediaBuffer = [];
+        mediaActive = true;
+      }
 
-    if (data.event === 'stop') {
-      console.log('🛑 Stop event received');
-      mediaActive = false;
+      if (data.event === 'media' && mediaActive) {
+        console.log('🎧 Received media chunk');
+        const payload = Buffer.from(data.media.payload, 'base64');
+        mediaBuffer.push(payload);
+      }
 
-      const completeAudio = Buffer.concat(mediaBuffer);
-      const filename = `/tmp/${uuidv4()}.wav`;
+      if (data.event === 'stop') {
+        console.log('🛑 Stop event received');
+        mediaActive = false;
 
-      await Bun.write(filename, completeAudio);
+        const completeAudio = Buffer.concat(mediaBuffer);
+        const filename = `/tmp/${uuidv4()}.wav`;
 
-      try {
+        await Bun.write(filename, completeAudio);
+
         const transcription = await openai.audio.transcriptions.create({
           file: Bun.file(filename),
           model: 'whisper-1',
@@ -73,7 +75,6 @@ wss.on('connection', (ws) => {
         const reply = aiResponse.choices[0].message.content;
         console.log('🤖 GPT Response:', reply);
 
-        // Send to ElevenLabs
         console.log('🎙️ Sending to ElevenLabs...');
         const ttsResponse = await axios({
           method: 'POST',
@@ -92,21 +93,20 @@ wss.on('connection', (ws) => {
 
         const audioBuffer = Buffer.from(ttsResponse.data);
 
-        // Stream audio back to Twilio
         const chunkSize = 3200;
         for (let i = 0; i < audioBuffer.length; i += chunkSize) {
           const chunk = audioBuffer.slice(i, i + chunkSize);
           const payload = chunk.toString('base64');
           ws.send(JSON.stringify({ event: 'media', media: { payload } }));
-          await new Promise((res) => setTimeout(res, 100)); // simulate pacing
+          await new Promise((res) => setTimeout(res, 100));
         }
 
         ws.send(JSON.stringify({ event: 'mark', mark: { name: 'done' } }));
         console.log('✅ Response streamed back to caller');
-
-      } catch (err) {
-        console.error('❌ Error during processing:', err.message);
       }
+    } catch (err) {
+      console.error('❌ Failed to parse message:', err.message);
+      console.log('📦 Raw message:', msg.toString());
     }
   });
 
@@ -123,5 +123,6 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🟢 WebSocket server ready on port ${PORT}`);
 });
+
 
 
