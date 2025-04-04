@@ -1,3 +1,4 @@
+import http from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
@@ -12,9 +13,14 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const wss = new WebSocketServer({ port: process.env.PORT || 8080, path: '/' });
+const server = http.createServer();
+const wss = new WebSocketServer({ noServer: true });
 
-console.log(`🟢 WebSocket server running on port ${process.env.PORT || 8080}`);
+server.on('upgrade', (req, socket, head) => {
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req);
+  });
+});
 
 wss.on('connection', (ws, req) => {
   console.log('📞 New WebSocket connection from Twilio');
@@ -76,6 +82,9 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log('❌ WebSocket closed');
   });
-}); // ✅ Correct number of closing brackets here
+});
 
-
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, () => {
+  console.log(`🟢 WebSocket relay server running on port ${PORT}`);
+});
