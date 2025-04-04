@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import wav from 'wav';
+import axios from 'axios';
 
 dotenv.config();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -62,14 +63,24 @@ wss.on('connection', (ws, req) => {
           const aiResponse = await openai.chat.completions.create({
             model: 'gpt-3.5-turbo',
             messages: [
-              { role: 'system', content: 'You are a helpful SDR working for Twilio. Keep responses concise and friendly.' },
+              {
+                role: 'system',
+                content:
+                  'You are a helpful SDR working for Twilio. Your job is to ask one qualifying question and try to get a meeting set up.',
+              },
               { role: 'user', content: transcription.text },
-            ]
+            ],
           });
 
-          console.log('🤖 AI Response:', aiResponse.choices[0].message.content);
+          const reply = aiResponse.choices[0].message.content;
+          console.log('🤖 AI Response:', reply);
+
+          // 🔊 Send response to /api/respond for TTS
+          await axios.post('https://voice-agent-inky.vercel.app/api/respond', {
+            message: reply,
+          });
         } catch (err) {
-          console.error('❌ Whisper failed:', err.message);
+          console.error('❌ Whisper or GPT failed:', err.message);
         }
       });
     }
@@ -84,7 +95,7 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// ✅ Bind to 0.0.0.0 so Render can route requests in
+// ✅ Listen on 0.0.0.0 so Render can expose the port
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🟢 WebSocket relay server running on port ${PORT}`);
