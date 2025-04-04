@@ -12,7 +12,6 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ✅ Make sure we're listening on `/` for Twilio compatibility
 const wss = new WebSocketServer({ port: process.env.PORT || 8080, path: '/' });
 
 console.log(`🟢 WebSocket server running on port ${process.env.PORT || 8080}`);
@@ -77,11 +76,6 @@ wss.on('connection', (ws, req) => {
   ws.on('close', () => {
     console.log('❌ WebSocket closed');
   });
-});
+}); // ✅ Correct number of closing brackets here
 
-
-  ws.on('close', () => {
-    console.log('❌ WebSocket connection closed');
-  });
-});
 
