@@ -68,7 +68,6 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
           );
         }
 
-        // End of response
         ws.send(
           JSON.stringify({
             type: 'text',
@@ -79,7 +78,7 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
 
         chatHistory.push({ role: 'assistant', content: fullResponse });
 
-        // Scheduling intent check
+        // Handoff detection
         if (/schedule|book|meeting|15/i.test(prompt)) {
           console.log('📆 Detected scheduling intent. Sending handoff...');
 
@@ -103,8 +102,6 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
               })
             );
           }, 2000);
-
-          return;
         }
       }
     } catch (err) {
@@ -120,14 +117,4 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Relay server listening on ${PORT}`);
 });
-
-
-  ws.on('close', () => console.log('❌ WebSocket closed'));
-});
-
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Relay server listening on ${PORT}`);
-});
-
 
