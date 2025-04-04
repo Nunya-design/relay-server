@@ -56,8 +56,7 @@ wss.on('connection', (ws, req) => {
 
     if (data.event === 'stop') {
       console.log('🛑 Media stream ended');
-
-      const outputPath = path.join(__dirname, 'output.wav');
+     const outputPath = '/tmp/output.wav';
       const fileWriter = new wav.FileWriter(outputPath, {
         sampleRate: 8000,
         channels: 1,
