@@ -85,6 +85,8 @@ wss.on('connection', (ws, req) => {
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`🟢 WebSocket relay server running on port ${PORT}`);
+});
+
 });
