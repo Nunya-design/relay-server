@@ -48,6 +48,15 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
         callSid = data.callSid;
         callerNumber = data.from;
         console.log(`🔗 Call SID: ${callSid}`);
+
+        // ✅ Send a quick SPI response to initiate voice
+        ws.send(
+          JSON.stringify({
+            type: 'text',
+            token: "Hi there! I'm your Twilio assistant. How can I help today?",
+            last: true,
+          })
+        );
       }
 
       if (data.type === 'prompt') {
@@ -146,4 +155,3 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Relay server listening on port ${PORT}`);
 });
-
