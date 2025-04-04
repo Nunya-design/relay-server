@@ -99,10 +99,12 @@ wss.on('connection', (ws, req) => {
     }
   });
 
-  ws.on('error', (err) => {
-    console.error('❌ WebSocket error:', err.message);
-  });
-
   ws.on('close', () => {
-  console.log('❌ WebSocket closed');
+    console.log('❌ WebSocket closed');
+  });
+}); // 👈 closes wss.on('connection')
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🟢 WebSocket relay server running on port ${PORT}`);
 });
