@@ -42,10 +42,5 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     console.log('❌ WebSocket connection closed');
   });
-});
+}); // ✅ this was the one closing } you needed
 
-
-  ws.on('close', () => {
-    console.log('❌ WebSocket connection closed');
-  });
-});
