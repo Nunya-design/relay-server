@@ -6,7 +6,6 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import wav from 'wav';
-import axios from 'axios';
 import twilio from 'twilio';
 
 dotenv.config();
@@ -25,6 +24,16 @@ server.on('upgrade', (req, socket, head) => {
     wss.emit('connection', ws, req);
   });
 });
+
+// Helper to escape special characters for XML
+function escapeXml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
 wss.on('connection', (ws, req) => {
   console.log('📞 New WebSocket connection from Twilio');
@@ -85,8 +94,9 @@ wss.on('connection', (ws, req) => {
           console.log('🤖 AI Response:', reply);
 
           if (callSid) {
+            const safeReply = escapeXml(reply);
             await twilioClient.calls(callSid).update({
-              twiml: `<Response><Say voice="Polly.Joanna">${reply}</Say><Hangup/></Response>`,
+              twiml: `<Response><Say voice="Polly.Joanna">${safeReply}</Say><Hangup/></Response>`,
             });
             console.log('📞 Sent GPT reply back to Twilio via REST API');
           } else {
@@ -99,12 +109,17 @@ wss.on('connection', (ws, req) => {
     }
   });
 
+  ws.on('error', (err) => {
+    console.error('❌ WebSocket error:', err.message);
+  });
+
   ws.on('close', () => {
     console.log('❌ WebSocket closed');
   });
-}); // 👈 closes wss.on('connection')
+});
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`🟢 WebSocket relay server running on port ${PORT}`);
 });
+
