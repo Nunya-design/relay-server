@@ -10,7 +10,7 @@ dotenv.config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const ELEVENLABS_API_KEY = 'sk_ff7a99bb4f596ae8c4d0b151b8bd60d94a195c8cd572b125';
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const ELEVENLABS_VOICE_ID = '21m00Tcm4TlvDq8ikWAM'; // Rachel voice
 
 const server = http.createServer();
