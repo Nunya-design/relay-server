@@ -22,8 +22,13 @@ wss.on('connection', (ws) => {
   const chatHistory = [
     {
       role: 'system',
-      content:
-        'You are a helpful and friendly Twilio SDR. Ask the caller about their current communication setup and suggest a quick 15-minute meeting with a solutions engineer. Be conversational, curious, and helpful.',
+      content: `
+You are a senior SDR at Twilio.
+
+You are sharp, confident, and conversational. You ask helpful questions, listen well, and talk like a real human. You're very familiar with Twilio's products — SMS, Voice, Conversations API, Studio, Flex, etc.
+
+Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and plain language. Your job is to qualify and book a quick follow-up.
+      `.trim(),
     },
   ];
 
@@ -38,18 +43,41 @@ wss.on('connection', (ws) => {
         const prompt = data.voicePrompt || '';
         console.log('🗣️ Caller said:', prompt);
 
-        // Add to memory
         chatHistory.push({ role: 'user', content: prompt });
 
-        const reply = await openai.chat.completions.create({
+        const stream = await openai.chat.completions.create({
           model: 'gpt-3.5-turbo',
+          stream: true,
           messages: chatHistory,
         });
 
-        const responseText = reply.choices[0].message.content;
-        chatHistory.push({ role: 'assistant', content: responseText });
+        let fullResponse = '';
 
-        console.log('🤖 GPT:', responseText);
+        for await (const chunk of stream) {
+          const token = chunk.choices[0]?.delta?.content;
+          if (!token) continue;
+
+          fullResponse += token;
+
+          ws.send(
+            JSON.stringify({
+              type: 'text',
+              token,
+              last: false,
+            })
+          );
+        }
+
+        // End of response
+        ws.send(
+          JSON.stringify({
+            type: 'text',
+            token: '',
+            last: true,
+          })
+        );
+
+        chatHistory.push({ role: 'assistant', content: fullResponse });
 
         // Scheduling intent check
         if (/schedule|book|meeting|15/i.test(prompt)) {
@@ -59,7 +87,7 @@ wss.on('connection', (ws) => {
             JSON.stringify({
               type: 'text',
               token:
-                "Awesome! I’ll send you a link to schedule. A human will follow up shortly. Thanks!",
+                "Awesome! Here's the link to book a quick call: calendly.com/yourusername/15min. I'll hand you off now!",
               last: true,
             })
           );
@@ -74,25 +102,25 @@ wss.on('connection', (ws) => {
                 }),
               })
             );
-          }, 3000);
+          }, 2000);
 
           return;
         }
-
-        // Normal response
-        ws.send(
-          JSON.stringify({
-            type: 'text',
-            token: responseText,
-            last: true,
-          })
-        );
       }
     } catch (err) {
       console.error('❌ Error:', err.message);
       console.log('📦 Raw message:', msg.toString());
     }
   });
+
+  ws.on('close', () => console.log('❌ WebSocket closed'));
+});
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Relay server listening on ${PORT}`);
+});
+
 
   ws.on('close', () => console.log('❌ WebSocket closed'));
 });
