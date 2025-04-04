@@ -4,7 +4,6 @@ import { OpenAI } from 'openai';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createWriteStream } from 'fs';
 import wav from 'wav';
 
 dotenv.config();
@@ -13,12 +12,15 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const wss = new WebSocketServer({ port: process.env.PORT || 8080 });
+// ✅ Make sure we're listening on `/` for Twilio compatibility
+const wss = new WebSocketServer({ port: process.env.PORT || 8080, path: '/' });
 
-wss.on('connection', (ws) => {
-  console.log('📞 New media stream connection');
+console.log(`🟢 WebSocket server running on port ${process.env.PORT || 8080}`);
 
-  let buffers = [];
+wss.on('connection', (ws, req) => {
+  console.log('📞 New WebSocket connection from Twilio');
+
+  const buffers = [];
 
   ws.on('message', async (msg) => {
     const data = JSON.parse(msg.toString());
@@ -31,7 +33,6 @@ wss.on('connection', (ws) => {
     if (data.event === 'stop') {
       console.log('🛑 Media stream ended');
 
-      // Combine all buffers into a single audio stream
       const outputPath = path.join(__dirname, 'output.wav');
       const fileWriter = new wav.FileWriter(outputPath, {
         sampleRate: 8000,
@@ -39,10 +40,7 @@ wss.on('connection', (ws) => {
         bitDepth: 16,
       });
 
-      for (const b of buffers) {
-        fileWriter.write(b);
-      }
-
+      for (const b of buffers) fileWriter.write(b);
       fileWriter.end();
 
       fileWriter.on('finish', async () => {
@@ -71,6 +69,16 @@ wss.on('connection', (ws) => {
       });
     }
   });
+
+  ws.on('error', (err) => {
+    console.error('❌ WebSocket error:', err.message);
+  });
+
+  ws.on('close', () => {
+    console.log('❌ WebSocket closed');
+  });
+});
+
 
   ws.on('close', () => {
     console.log('❌ WebSocket connection closed');
