@@ -2,6 +2,7 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
+import fetch from 'node-fetch';
 
 dotenv.config();
 
@@ -16,9 +17,16 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-wss.on('connection', (ws) => {
-  console.log('🟢 ConversationRelay WebSocket connected');
+wss.on('connection', (ws, req) => {
+  console.log('🟢 New ConversationRelay WebSocket connected');
 
+  const url = new URL(`http://localhost?${req.url.split('?')[1]}`);
+  const recordId = url.searchParams.get('recordId') || null;
+
+  let callSid = '';
+  let callerNumber = '';
+  let fullTranscript = '';
+  let aiSummary = '';
   const chatHistory = [
     {
       role: 'system',
@@ -32,16 +40,20 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
     },
   ];
 
-  ws.on('message', async (msg) => {
+  ws.on('message', async (message) => {
     try {
-      const text = typeof msg === 'string' ? msg : msg.toString();
-      const data = JSON.parse(text);
+      const data = JSON.parse(message);
 
-      console.log('📨 Incoming:', data.type);
+      if (data.type === 'setup') {
+        callSid = data.callSid;
+        callerNumber = data.from;
+        console.log(`🔗 Call SID: ${callSid}`);
+      }
 
       if (data.type === 'prompt') {
-        const prompt = data.voicePrompt || '';
-        console.log('🗣️ Caller said:', prompt);
+        const prompt = data.voicePrompt;
+        fullTranscript += `\n${prompt}`;
+        console.log('🗣️ Caller:', prompt);
 
         chatHistory.push({ role: 'user', content: prompt });
 
@@ -51,13 +63,13 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
           messages: chatHistory,
         });
 
-        let fullResponse = '';
+        let reply = '';
 
         for await (const chunk of stream) {
           const token = chunk.choices[0]?.delta?.content;
           if (!token) continue;
 
-          fullResponse += token;
+          reply += token;
 
           ws.send(
             JSON.stringify({
@@ -76,37 +88,54 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
           })
         );
 
-        chatHistory.push({ role: 'assistant', content: fullResponse });
+        aiSummary = reply;
+        chatHistory.push({ role: 'assistant', content: reply });
 
-        // Handoff detection
-        if (/schedule|book|meeting|15/i.test(prompt)) {
-          console.log('📆 Detected scheduling intent. Sending handoff...');
+        // Detect handoff intent
+        if (/schedule|book|meeting|demo|calendar/i.test(prompt)) {
+          console.log('📆 Scheduling intent detected. Handoff...');
 
           ws.send(
             JSON.stringify({
               type: 'text',
               token:
-                "Awesome! Here's the link to book a quick call: calendly.com/yourusername/15min. I'll hand you off now!",
+                "Awesome! Here's the link to book a quick call: https://calendly.com/your-link/15min. I'll hand you off now!",
               last: true,
             })
           );
 
-          setTimeout(() => {
+          setTimeout(async () => {
+            if (recordId) {
+              await fetch('https://voice-agent-inky.vercel.app/api/log-call', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  recordId,
+                  callSid,
+                  from: callerNumber,
+                  timestamp: new Date().toISOString(),
+                  transcript: fullTranscript,
+                  notes: aiSummary,
+                  handoffReason: 'Caller ready to book a meeting',
+                }),
+              });
+              console.log('✅ Call data logged to Airtable');
+            }
+
             ws.send(
               JSON.stringify({
                 type: 'end',
                 handoffData: JSON.stringify({
                   reasonCode: 'sdr-handoff',
-                  reason: 'Caller ready to book a meeting',
+                  reason: 'Interested in booking',
                 }),
               })
             );
-          }, 2000);
+          }, 2500);
         }
       }
     } catch (err) {
-      console.error('❌ Error:', err.message);
-      console.log('📦 Raw message:', msg.toString());
+      console.error('❌ WebSocket error:', err.message);
     }
   });
 
@@ -115,6 +144,6 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ Relay server listening on ${PORT}`);
+  console.log(`✅ Relay server listening on port ${PORT}`);
 });
 
