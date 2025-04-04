@@ -104,4 +104,5 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    console.log('❌ WebSocket
+  console.log('❌ WebSocket closed');
+});
