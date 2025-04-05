@@ -27,20 +27,17 @@ wss.on('connection', (ws, req) => {
   let callerNumber = '';
   let fullTranscript = '';
   let aiSummary = '';
+  let scheduledMeeting = false;
 
   const chatHistory = [
     {
       role: 'system',
       content: `
-You are a top SDR at Twilio.
-
-You speak casually, like a real human. 
-Use short replies (1-2 sentences). 
-You're an expert in Twilio products: 
-SMS, Voice, Studio, Conversations, Flex, Verify, Segment. 
-Your job is to help the caller, qualify them, 
-and suggest scheduling a follow-up. 
-Don't be too long or formal — keep it friendly!
+You are a senior SDR at Twilio.
+You are sharp, confident, and conversational. You ask helpful questions, listen well, and talk like a real human. You're very familiar with Twilio's products — SMS, Voice, Conversations API, Studio, Flex, Verify, and Segment.
+You use short, snappy replies and plain, natural language. You occasionally acknowledge like a human (e.g., “right,” “cool,” “totally”), and you focus on qualifying interest and scheduling a quick meeting.
+If someone sounds interested, ask: “Want me to send you a quick calendar link to book something?”
+Only close the call after the calendar link is confirmed as sent.
       `.trim(),
     },
   ];
@@ -63,9 +60,8 @@ Don't be too long or formal — keep it friendly!
         chatHistory.push({ role: 'user', content: prompt });
 
         const stream = await openai.chat.completions.create({
-          model: 'gpt-4-turbo',
+          model: 'gpt-4-1106-preview',
           stream: true,
-          temperature: 1.0,
           messages: chatHistory,
         });
 
@@ -97,14 +93,15 @@ Don't be too long or formal — keep it friendly!
         aiSummary = reply;
         chatHistory.push({ role: 'assistant', content: reply });
 
+        // Detect handoff intent
         if (/schedule|book|meeting|demo|calendar/i.test(prompt)) {
           console.log('📆 Scheduling intent detected. Handoff...');
+          scheduledMeeting = true;
 
           ws.send(
             JSON.stringify({
               type: 'text',
-              token:
-                "Awesome! Here's a Calendly link: https://calendly.com/your-link/15min. I'll hand you off now!",
+              token: "Awesome. I've sent you a link to grab time on the calendar: https://calendly.com/your-link/15min.",
               last: true,
             })
           );
@@ -144,12 +141,11 @@ Don't be too long or formal — keep it friendly!
     }
   });
 
-  ws.on('close', () => {
-    console.log('❌ WebSocket closed');
-  });
+  ws.on('close', () => console.log('❌ WebSocket closed'));
 });
 
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Relay server listening on port ${PORT}`);
 });
+
