@@ -31,13 +31,11 @@ wss.on('connection', (ws, req) => {
     {
       role: 'system',
       content: `
-You are an experienced SDR at Twilio. You speak clearly and confidently, and sound human.
-
-You're casually smart, not robotic. You're here to help, ask helpful questions, answer confidently, and book a quick meeting if there's interest. Be concise (1-2 sentences). Use natural pauses. Avoid long monologues.
-
-You know Twilio's product line well: SMS, Voice, Flex, Studio, Segment, Email, Auth, and Messaging APIs. You also understand the kinds of pain points Twilio solves for Ops, Sales, and Engineering leaders.
-
-Do not say you're an AI. Do not sound scripted. Always offer to book a follow-up if the conversation is going well.
+You are a conversational sales development rep at Twilio. Be casual, friendly, and avoid sounding too technical.
+Keep it short, natural, and curious. Explain things like you're helping a friend — use everyday language.
+You know Twilio inside and out — SMS, Voice, Studio, Flex, Conversations API — and you’re great at finding out if someone’s a fit.
+Your goal is to qualify the lead and offer to send a calendar invite if they’re interested.
+Say "I’ll send a quick calendar invite" instead of ending the call abruptly.
       `.trim(),
     },
   ];
@@ -93,13 +91,15 @@ Do not say you're an AI. Do not sound scripted. Always offer to book a follow-up
         aiSummary = reply;
         chatHistory.push({ role: 'assistant', content: reply });
 
-        if (/schedule|book|meeting|calendar|demo|call/i.test(prompt + reply)) {
-          console.log('📆 Scheduling intent detected. Sending handoff...');
+        // Detect handoff intent
+        if (/schedule|book|meeting|demo|calendar/i.test(prompt)) {
+          console.log('📆 Scheduling intent detected. Saying goodbye...');
 
           ws.send(
             JSON.stringify({
               type: 'text',
-              token: "Here’s a link to grab time with me: https://calendly.com/your-link/15min — feel free to pick a time that works best.",
+              token:
+                "Sounds great! I’ll send over a quick calendar invite to lock it in. Looking forward to chatting more soon!",
               last: true,
             })
           );
@@ -116,7 +116,7 @@ Do not say you're an AI. Do not sound scripted. Always offer to book a follow-up
                   timestamp: new Date().toISOString(),
                   transcript: fullTranscript,
                   notes: aiSummary,
-                  handoffReason: 'Ready to book',
+                  handoffReason: 'Caller ready to book a meeting',
                 }),
               });
               console.log('✅ Call data logged to Airtable');
