@@ -2,6 +2,7 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import dotenv from 'dotenv';
 import { OpenAI } from 'openai';
+import fetch from 'node-fetch';
 
 dotenv.config();
 
@@ -16,49 +17,73 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-wss.on('connection', (ws) => {
-  console.log('🟢 ConversationRelay WebSocket connected');
+wss.on('connection', (ws, req) => {
+  console.log('🟢 New ConversationRelay WebSocket connected');
 
+  // Grab recordId from the URL, if present
+  const url = new URL(`http://localhost?${req.url.split('?')[1]}`);
+  const recordId = url.searchParams.get('recordId') || null;
+
+  let callSid = '';
+  let callerNumber = '';
+  let fullTranscript = '';
+  let aiSummary = '';
+
+  // System prompt: more creative, but still short, real, and helpful
   const chatHistory = [
     {
       role: 'system',
       content: `
-You are a senior SDR at Twilio.
+You are a top SDR at Twilio.
 
-You are sharp, confident, and conversational. You ask helpful questions, listen well, and talk like a real human. You're very familiar with Twilio's products — SMS, Voice, Conversations API, Studio, Flex, etc.
-
-Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and plain language. Your job is to qualify and book a quick follow-up.
+You speak casually, like a real human. 
+Use short replies (1-2 sentences). 
+You're an expert in Twilio products: 
+SMS, Voice, Studio, Conversations, Flex, Verify, Segment. 
+Your job is to help the caller, qualify them, 
+and suggest scheduling a follow-up. 
+Don't be too long or formal — keep it friendly!
       `.trim(),
     },
   ];
 
-  ws.on('message', async (msg) => {
+  ws.on('message', async (message) => {
     try {
-      const text = typeof msg === 'string' ? msg : msg.toString();
-      const data = JSON.parse(text);
+      const data = JSON.parse(message);
 
-      console.log('📨 Incoming:', data.type);
+      if (data.type === 'setup') {
+        // Twilio's initial setup message
+        callSid = data.callSid;
+        callerNumber = data.from;
+        console.log(`🔗 Call SID: ${callSid}`);
+      }
 
       if (data.type === 'prompt') {
-        const prompt = data.voicePrompt || '';
-        console.log('🗣️ Caller said:', prompt);
+        const prompt = data.voicePrompt;
+        fullTranscript += `\n${prompt}`;
+        console.log('🗣️ Caller:', prompt);
 
+        // Add caller's message to chat history
         chatHistory.push({ role: 'user', content: prompt });
 
+        // GPT streaming with higher temperature for more “human” responses
         const stream = await openai.chat.completions.create({
-          model: 'gpt-3.5-turbo',
+          model: 'gpt-4-turbo',
           stream: true,
+          temperature: 1.0,     // 🔥 Turn up creativity
           messages: chatHistory,
         });
 
-        let fullResponse = '';
+        let reply = '';
 
         for await (const chunk of stream) {
+          // chunk.choices[0]?.delta?.content = next token
           const token = chunk.choices[0]?.delta?.content;
           if (!token) continue;
 
-          fullResponse += token;
+          reply += token;
 
+          // Send each token as it arrives
           ws.send(
             JSON.stringify({
               type: 'text',
@@ -68,6 +93,7 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
           );
         }
 
+        // Mark the final token
         ws.send(
           JSON.stringify({
             type: 'text',
@@ -76,39 +102,69 @@ Keep responses short (1-2 sentences max), avoid rambling. Use natural pauses and
           })
         );
 
-        chatHistory.push({ role: 'assistant', content: fullResponse });
+        aiSummary = reply;
+        chatHistory.push({ role: 'assistant', content: reply });
 
-        // Handoff detection
-        if (/schedule|book|meeting|15/i.test(prompt)) {
-          console.log('📆 Detected scheduling intent. Sending handoff...');
+        // Basic handoff detection
+        if (/schedule|book|meeting|demo|calendar/i.test(prompt)) {
+          console.log('📆 Scheduling intent detected. Handoff...');
 
           ws.send(
             JSON.stringify({
               type: 'text',
               token:
-                "Awesome! Here's the link to book a quick call: calendly.com/yourusername/15min. I'll hand you off now!",
+                "Awesome! Here's the link to book a short call: https://calendly.com/your-link/15min. I'll hand you off now!",
               last: true,
             })
           );
 
-          setTimeout(() => {
+          setTimeout(async () => {
+            if (recordId) {
+              // Log to Airtable or other CRM
+              await fetch('https://voice-agent-inky.vercel.app/api/log-call', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  recordId,
+                  callSid,
+                  from: callerNumber,
+                  timestamp: new Date().toISOString(),
+                  transcript: fullTranscript,
+                  notes: aiSummary,
+                  handoffReason: 'Caller ready to book a meeting',
+                }),
+              });
+              console.log('✅ Call data logged to Airtable');
+            }
+
+            // End the call
             ws.send(
               JSON.stringify({
                 type: 'end',
                 handoffData: JSON.stringify({
                   reasonCode: 'sdr-handoff',
-                  reason: 'Caller ready to book a meeting',
+                  reason: 'Interested in booking',
                 }),
               })
             );
-          }, 2000);
+          }, 2500);
         }
       }
     } catch (err) {
-      console.error('❌ Error:', err.message);
-      console.log('📦 Raw message:', msg.toString());
+      console.error('❌ WebSocket error:', err.message);
     }
   });
+
+  ws.on('close', () => {
+    console.log('❌ WebSocket closed');
+  });
+});
+
+const PORT = process.env.PORT || 8080;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Relay server listening on port ${PORT}`);
+});
+
 
   ws.on('close', () => console.log('❌ WebSocket closed'));
 });
