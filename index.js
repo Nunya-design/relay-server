@@ -27,17 +27,17 @@ wss.on('connection', (ws, req) => {
   let callerNumber = '';
   let fullTranscript = '';
   let aiSummary = '';
-  let scheduledMeeting = false;
-
   const chatHistory = [
     {
       role: 'system',
       content: `
-You are a senior SDR at Twilio.
-You are sharp, confident, and conversational. You ask helpful questions, listen well, and talk like a real human. You're very familiar with Twilio's products — SMS, Voice, Conversations API, Studio, Flex, Verify, and Segment.
-You use short, snappy replies and plain, natural language. You occasionally acknowledge like a human (e.g., “right,” “cool,” “totally”), and you focus on qualifying interest and scheduling a quick meeting.
-If someone sounds interested, ask: “Want me to send you a quick calendar link to book something?”
-Only close the call after the calendar link is confirmed as sent.
+You are an experienced SDR at Twilio. You speak clearly and confidently, and sound human.
+
+You're casually smart, not robotic. You're here to help, ask helpful questions, answer confidently, and book a quick meeting if there's interest. Be concise (1-2 sentences). Use natural pauses. Avoid long monologues.
+
+You know Twilio's product line well: SMS, Voice, Flex, Studio, Segment, Email, Auth, and Messaging APIs. You also understand the kinds of pain points Twilio solves for Ops, Sales, and Engineering leaders.
+
+Do not say you're an AI. Do not sound scripted. Always offer to book a follow-up if the conversation is going well.
       `.trim(),
     },
   ];
@@ -60,7 +60,7 @@ Only close the call after the calendar link is confirmed as sent.
         chatHistory.push({ role: 'user', content: prompt });
 
         const stream = await openai.chat.completions.create({
-          model: 'gpt-4-1106-preview',
+          model: 'gpt-4-turbo',
           stream: true,
           messages: chatHistory,
         });
@@ -93,15 +93,13 @@ Only close the call after the calendar link is confirmed as sent.
         aiSummary = reply;
         chatHistory.push({ role: 'assistant', content: reply });
 
-        // Detect handoff intent
-        if (/schedule|book|meeting|demo|calendar/i.test(prompt)) {
-          console.log('📆 Scheduling intent detected. Handoff...');
-          scheduledMeeting = true;
+        if (/schedule|book|meeting|calendar|demo|call/i.test(prompt + reply)) {
+          console.log('📆 Scheduling intent detected. Sending handoff...');
 
           ws.send(
             JSON.stringify({
               type: 'text',
-              token: "Awesome. I've sent you a link to grab time on the calendar: https://calendly.com/your-link/15min.",
+              token: "Here’s a link to grab time with me: https://calendly.com/your-link/15min — feel free to pick a time that works best.",
               last: true,
             })
           );
@@ -118,7 +116,7 @@ Only close the call after the calendar link is confirmed as sent.
                   timestamp: new Date().toISOString(),
                   transcript: fullTranscript,
                   notes: aiSummary,
-                  handoffReason: 'Caller ready to book a meeting',
+                  handoffReason: 'Ready to book',
                 }),
               });
               console.log('✅ Call data logged to Airtable');
@@ -133,7 +131,7 @@ Only close the call after the calendar link is confirmed as sent.
                 }),
               })
             );
-          }, 2500);
+          }, 3000);
         }
       }
     } catch (err) {
@@ -148,4 +146,5 @@ const PORT = process.env.PORT || 8080;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Relay server listening on port ${PORT}`);
 });
+
 
